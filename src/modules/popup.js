@@ -36,43 +36,41 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ["createMultifoxPopup"];
+Components.utils.import("resource://multifox-modules/new-window.js");
 
-Components.utils.import("${PATH_MODULE}/new-window.js");
-
-function createMultifoxPopup(icon, Profile) {
-  var doc = icon.ownerDocument;
-  var win = doc.defaultView;
-
+function createMsgPanel(doc) {
   var panel = doc.getElementById("multifox-popup");
   if (panel) {
     //bug
-    win.alert("createMultifoxPopup dup popup " + panel.state);
+    doc.defaultView.alert("createMsgPanel dup popup " + panel.state);
     panel.hidePopup();
     return panel;
   }
 
   panel = doc.getElementById("mainPopupSet").appendChild(doc.createElement("panel"));
   panel.setAttribute("id", "multifox-popup");
+  var fx36 = is192();
+  if (!fx36) {
+    panel.setAttribute("type", "arrow");
+  }
 
   var container = panel.appendChild(doc.createElement("vbox"));
-  container.style.margin = "1.2em 1.4em";
+  //container.style.margin = "1.2em 1.4em";
+  container.style.width = "30em";
 
-  var but = appendError(container, panel);
-  appendLogo(container);
-  appendProfileId(container, icon, Profile);
-  var link = appendAbout(container, panel);
+  var but = appendContent(container, panel);
 
   panel.addEventListener("popupshowing", function(evt) {
-    copyCss(doc.getElementById("editBookmarkPanel"), panel);
-    if (but) {
-      copyButtonCss(doc, but);
+    if (fx36) {
+      copyCss(doc.getElementById("editBookmarkPanel"), panel);
+      if (but) {
+        copyButtonCss(doc, but);
+      }
     }
-    panel.style.width = "30em";
   }, false);
 
   panel.addEventListener("popupshown", function(evt) {
-    link.focus();
+    but.focus();
   }, false);
 
   panel.addEventListener("popuphidden", function(evt) {
@@ -83,90 +81,17 @@ function createMultifoxPopup(icon, Profile) {
 }
 
 
-function appendError(container, panel) {
+function appendContent(container, panel) {
   var tab = container.ownerDocument.defaultView.getBrowser().selectedTab;
   var errorId = tab.getAttribute("multifox-tab-error");
   if (errorId.length === 0) {
     return null;
   }
-  Components.utils.import("${PATH_MODULE}/error.js");
-  return appendErrorToPanel(container, panel, errorId);
-}
 
-
-function appendAbout(container, panel) {
-  var doc = container.ownerDocument;
-  var box = container.appendChild(doc.createElement("hbox"));
-  var spc = box.appendChild(doc.createElement("spacer"));
-  spc.flex = 1;
-
-  var link = box.appendChild(doc.createElement("label"));
-  link.setAttribute("value", util.getText("icon.panel.link.label", "${EXT_NAME}"));
-  link.setAttribute("class", "text-link");
-  link.addEventListener("click", function(evt) {
-    if (evt.button !== 0) {
-      return;
-    }
-
-    panel.hidePopup();
-
-    var uri = Cc["@mozilla.org/network/io-service;1"]
-                .getService(Ci.nsIIOService)
-                .newURI("about:multifox", null, null);
-    var win = evt.target.ownerDocument.defaultView;
-    var where = Ci.nsIBrowserDOMWindow.OPEN_NEWTAB;
-    win.browserDOMWindow.openURI(uri, null, where, null);
-
-  }, false);
-
-  var selectedUri = doc.defaultView.getBrowser().selectedBrowser.currentURI;
-  if (selectedUri.spec === "about:multifox") {
-    link.setAttribute("hidden", "true");
-  }
-
-  return link;
-}
-
-
-function appendLogo(container) {
-  var doc = container.ownerDocument;
-  var box = container.appendChild(doc.createElement("hbox"));
-  var img = box.appendChild(doc.createElement("image"));
-  img.setAttribute("src", "${PATH_CONTENT}/logo-popup.png");
-  img.setAttribute("width", "175");
-  img.setAttribute("height", "97");
-  img.style.marginLeft = "-10px";
-}
-
-
-function appendProfileId(container, icon, Profile) {
-  var doc = container.ownerDocument;
-  var tab = doc.defaultView.getBrowser().selectedTab;
-  var profileId = Profile.getIdentity(tab);
-
-  var desc1 = container.appendChild(doc.createElement("box"));
-  desc1.setAttribute("align", "center");
-  var desc2 = container.appendChild(doc.createElement("description"));
-
-  var p1 = util.getText("icon.panel.p1.label", "[${PATH_CONTENT}]").split("[${PATH_CONTENT}]");
-  desc1.appendChild(doc.createElement("label")).setAttribute("value", p1[0]);
-
-  var editProfileId = desc1.appendChild(doc.createElement("textbox"));
-  desc1.appendChild(doc.createElement("label")).setAttribute("value", p1[1]);
-
-  editProfileId.setAttribute("type", "number");
-  editProfileId.setAttribute("size", "1");
-  editProfileId.setAttribute("min", Profile.DefaultIdentity);
-  editProfileId.setAttribute("max", Profile.MaxIdentity);
-  editProfileId.setAttribute("value", profileId);
-
-  editProfileId.addEventListener("change", function(evt) {
-    var id = editProfileId.valueNumber;
-    editProfileId.valueNumber = Profile.defineIdentity(tab, id);
-  }, false);
-
-  var p2 = util.getText("icon.panel.p2.label");
-  desc2.appendChild(doc.createTextNode(p2));
+  var ns = {};
+  var subscript = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
+  subscript.loadSubScript("resource://multifox-modules/error.js", ns);
+  return ns.appendErrorToPanel(container, panel, errorId);
 }
 
 
@@ -177,7 +102,7 @@ function copyButtonCss(doc, toBut) {
     // wait xbl
     var source = doc.getAnonymousElementByAttribute(srcBut, "class", "box-inherit button-box");
     var target = doc.getAnonymousElementByAttribute(toBut,  "class", "box-inherit button-box");
-    target.setAttribute("style","");
+    target.setAttribute("style",""); // BUG Error: target is null
     copyCss(source, target);
   }, 0);
 }
@@ -202,4 +127,198 @@ function copyCss(source, target) {
       style2[name] = style1[name];
     }
   }
+}
+
+
+function is192() {
+  var info = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo);
+  return info.platformVersion.indexOf("1.9") === 0; // Gecko 1.9.2
+}
+
+
+function createLoginsMenu(menupopup, onHidden) {
+  menupopup.addEventListener("command", onLoginCommand, false);
+  menupopup.addEventListener("click", onLoginClick, false);
+  menupopup.addEventListener("popuphidden", function(evt) {
+    if (evt.currentTarget === evt.target) { // bubbled event?
+      onHidden();
+      menupopup.removeEventListener("command", onLoginCommand, false);
+      menupopup.parentNode.removeChild(menupopup);
+    }
+  }, false);
+
+
+  var doc = menupopup.ownerDocument;
+  var tab = doc.defaultView.getBrowser().selectedTab;
+  var tabLogin = new TabInfo(tab);
+
+  // list all accounts
+  populateUsers(tabLogin.getTabTldEncoded(), tabLogin, menupopup);
+
+  // new account
+  var newAccount = menupopup.appendChild(doc.createElement("menuitem"));
+  newAccount.setAttribute("label", util.getText("icon.user.new.label"));
+  newAccount.setAttribute("accesskey", util.getText("icon.user.new.accesskey"));
+  newAccount.setAttribute("cmd", "new account");
+  if (tabLogin.isNewUser) {
+    newAccount.className = "menuitem-iconic";
+    newAccount.setAttribute("image", "chrome://multifox/content/favicon.ico");
+  }
+
+  // about
+  menupopup.appendChild(doc.createElement("menuseparator"));
+  var item4 = menupopup.appendChild(doc.createElement("menuitem"));
+  item4.setAttribute("label", util.getText("icon.user.about.label", "Multifox (BETA)"));
+  item4.setAttribute("accesskey", util.getText("icon.user.about.accesskey"));
+  item4.setAttribute("cmd", "about");
+}
+
+
+function populateUsers(enc_tabTld, tabLogin, menupopup) {
+  console.log('populateUsers',enc_tabTld, "/", tabLogin.toString());
+  var users = LoginData.getEncodedTldUsers(enc_tabTld); // TODO nao seria tabLogin.plainTld?
+  if (users.length === 0) {
+    return;
+  }
+
+  var doc = menupopup.ownerDocument;
+
+  for (var idx = users.length - 1; idx > -1; idx--) {
+    var myUser = users[idx];
+
+    if ((tabLogin.encodedUser === myUser.username5) && (tabLogin.encodedTld === myUser.tld)) {
+      // current user
+      var userMenu = menupopup.appendChild(doc.createElement("menu"));
+      userMenu.className = "menu-iconic";
+      userMenu.setAttribute("image", "chrome://multifox/content/favicon.ico");
+      userMenu.setAttribute("label", myUser.usernamePlain);
+      if (myUser.tld !== enc_tabTld) {
+        userMenu.setAttribute("tooltiptext", hexToString(myUser.tld));
+      }
+      var userPopup = userMenu.appendChild(doc.createElement("menupopup"));
+      var delItem = userPopup.appendChild(doc.createElement("menuitem"));
+
+      delItem.setAttribute("label", util.getText("icon.user.current.remove.label"));
+      delItem.setAttribute("accesskey", util.getText("icon.user.current.remove.accesskey"));
+      delItem.setAttribute("cmd", "del user");
+      delItem.setAttribute("login-user16", myUser.username5);
+      delItem.setAttribute("login-tld", myUser.tld);
+
+    } else {
+      var usernameItem = menupopup.appendChild(doc.createElement("menuitem"));
+      usernameItem.setAttribute("type", "radio");
+      usernameItem.setAttribute("label", myUser.usernamePlain);
+      usernameItem.setAttribute("cmd", "switch user");
+      usernameItem.setAttribute("login-user16", myUser.username5);
+      usernameItem.setAttribute("login-tld", myUser.tld);
+      if (myUser.tld !== enc_tabTld) {
+        usernameItem.setAttribute("tooltiptext", hexToString(myUser.tld));
+      }
+    }
+  }
+
+  menupopup.appendChild(doc.createElement("menuseparator"));
+}
+
+
+function onLoginClick(evt){
+  if ((evt.button !== 1) || (evt.detail !== 1)) {
+    return;
+  }
+
+  var menuItem = evt.target;
+  if (menuItem.hasAttribute("disabled") && (menuItem.getAttribute("disabled") === "true")) {
+    return;
+  }
+
+  menuItem.parentNode.hidePopup();
+  loginCommandCore(menuItem, true);
+}
+
+
+function onLoginCommand(evt){
+  loginCommandCore(evt.target, evt.ctrlKey);
+}
+
+
+function loginCommandCore(menuItem, newTab) {
+  var win = menuItem.ownerDocument.defaultView;
+  var tab = win.getBrowser().selectedTab;
+  var uri = tab.linkedBrowser.contentDocument.documentURIObject;
+  console.log('loginCommandCore', uri.spec, '***',tab.linkedBrowser.contentDocument.location);
+  if (isSupportedScheme(uri.scheme) === false) {
+    // Error page:
+    // documentURI = about:neterror?e=netTimeout...
+    // location    = http://twitter.com/
+    return;
+  }
+
+  var tabTld = getTldFromHost(uri.host);
+
+  switch (menuItem.getAttribute("cmd")) {
+    case "del user":
+      removeUser(menuItem.getAttribute("login-user16"), menuItem.getAttribute("login-tld"));
+      loadTab(newTab, tab, TabLogin.NewAccount, menuItem.getAttribute("login-tld"));
+      break;
+
+    case "switch user":
+      loadTab(newTab, tab, menuItem.getAttribute("login-user16"), menuItem.getAttribute("login-tld"));
+      break;
+
+    case "new account":
+      removeLoginTldData(tabTld, false);
+      loadTab(newTab, tab, TabLogin.NewAccount, new TabInfo(tab).encodedTld);
+      break;
+
+    case "about":
+      openNewTab("about:multifox", win);
+      break;
+
+    default:
+      console.trace();
+      throw new Error("loginCommandCore:" + menuItem.getAttribute("cmd"));
+  }
+}
+
+
+function removeUser(encUser, encTld) {
+  var mgr = Cc["@mozilla.org/cookiemanager;1"].getService(Ci.nsICookieManager2);
+  var cookie;
+  var all = InternalHost.getUserCookies(encUser, encTld);
+  for (var idx = all.length - 1; idx > -1; idx--) {
+    cookie = all[idx];
+    mgr.remove(cookie.host, cookie.name, cookie.path, false);
+  }
+}
+
+
+function removeLoginTldData(tld, internalHost) {
+  console.log('removeLoginTldData',tld);
+  removeTldData_cookies(tld);
+  removeTldData_LS(tld);
+}
+
+
+function loadTab(newTab, tab, encUser, encTld) {
+  var tabLogin = TabLogin.create(tab, encUser, encTld);
+  var browser = tab.linkedBrowser;
+  var url = browser.contentDocument.location.href;
+
+  if (newTab) {
+    LoginData.setDefaultLogin(tabLogin.getTabTldEncoded(), encUser, encTld);
+    openNewTab(url, tab.ownerDocument.defaultView);
+  } else {
+    tabLogin.saveToTab();
+    updateUI(tab, true);
+    // don't use browser.reload(), it would reload POST requests
+    browser.loadURIWithFlags(url, Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE);
+  }
+}
+
+
+function openNewTab(url, win) {
+  var io = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
+  var uri = io.newURI(url, null, null);
+  var where = Ci.nsIBrowserDOMWindow.OPEN_NEWTAB;
+  var win2 = win.browserDOMWindow.openURI(uri, null, where, 0); // TODO open tab at the right
 }

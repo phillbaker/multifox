@@ -36,10 +36,8 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ["appendErrorToPanel"];
-
-Components.utils.import("${PATH_MODULE}/new-window.js");
-Components.utils.import("${PATH_MODULE}/main.js");
+Components.utils.import("resource://multifox-modules/new-window.js");
+Cu.import("resource://multifox-modules/main.js");
 
 // <vbox>  <== box
 //   <hbox>  <== box2
@@ -48,7 +46,6 @@ Components.utils.import("${PATH_MODULE}/main.js");
 //       <description/>
 //       <hbox>  <== box4
 //         <button/>
-//   <separator/>
 
 function appendErrorToPanel(box, panel, error) {
   var doc = box.ownerDocument;
@@ -65,7 +62,7 @@ function appendErrorToPanel(box, panel, error) {
   var box3 = box2.appendChild(doc.createElement("vbox"));
   box3.setAttribute("flex", "1");
 
-  var txt = util.getText("icon.panel.unsupported-general.label", "${EXT_NAME}");
+  var txt = util.getText("icon.panel.unsupported-general.label", "Multifox (BETA)");
   box3.appendChild(doc.createElement("description"))
       .appendChild(doc.createTextNode(txt));
 
@@ -80,26 +77,41 @@ function appendErrorToPanel(box, panel, error) {
 
 
   var but = box3.appendChild(doc.createElement("hbox")).appendChild(doc.createElement("button"));
-  but.setAttribute("label", util.getText("icon.panel.make-tab-default.button.label"));
+  but.setAttribute("label", util.getText("icon.panel.make-tab-default.button.label", "Multifox (BETA)"));
   but.setAttribute("accesskey", util.getText("icon.panel.make-tab-default.button.accesskey"));
   but.addEventListener("command", function(evt) {
     panel.hidePopup();
     moveTabToDefault(but);
   }, false);
 
-
-  var sep = box.appendChild(doc.createElement("separator"));
-  sep.setAttribute("class", "groove");
-  sep.style.margin = "1.2em 0";
-
   return but;
 }
 
 
 function moveTabToDefault(button) {
-  var sourceWin = button.ownerDocument.defaultView;
-  var sourceTab = sourceWin.getBrowser().selectedTab;
-  Profile.defineIdentity(sourceTab, Profile.DefaultIdentity);
-  // TODO move data to default id
-  sourceTab.linkedBrowser.reload();
+  var win = button.ownerDocument.defaultView;
+  var tab = win.getBrowser().selectedTab;
+  var tabLogin = new TabInfo(tab);
+  tabLogin.setTabAsAnon();
+  moveData_toDefault(tabLogin.getTabTld(), tabLogin);
+  tab.linkedBrowser.loadURIWithFlags(tab.linkedBrowser.contentDocument.documentURI, Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE);
+}
+
+
+function moveData_toDefault(tabTld, tabLogin) {
+  //removeTldData_cookies(tabTld);
+
+  var all = removeTldData_cookies(tabLogin.formatHost(tabTld));
+  console.log('===>moveData_toDefault ', tabTld, tabLogin.toString(), "cookies:", all.length);
+  var cookie;
+  var hostData;
+  for (var idx = all.length - 1; idx > -1; idx--) {
+    cookie = all[idx];
+    hostData = InternalHost.parseHost(cookie.host);
+    if (hostData !== null) {
+      copyCookieToNewHost(cookie, hostData.realHost);
+    }
+  }
+
+  var all2 = removeTldData_LS(tabTld);
 }

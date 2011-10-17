@@ -37,140 +37,160 @@
 // Add hooks to documents (cookie, localStorage, ...)
 
 function DocStartScriptInjection() {
-  var is192 = this._is192();
-  this._loader = new ScriptSourceLoader(is192);
-  Cc["@mozilla.org/observer-service;1"]
-    .getService(Ci.nsIObserverService)
-    .addObserver(this, this._getTopic(is192), false);
+ var is192 = this._is192();
+ this._loader = new ScriptSourceLoader(is192);
+ var obs = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
+ obs.addObserver(this, this._getTopic(is192), false);
 }
 
 DocStartScriptInjection.prototype = {
-  stop: function() {
-    Cc["@mozilla.org/observer-service;1"]
-      .getService(Ci.nsIObserverService)
-      .removeObserver(this, this._getTopic(this._is192()));
-    delete this._loader;
-  },
+ stop: function() {
+   var obs = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
+   obs.removeObserver(this, this._getTopic(this._is192()));
+   delete this._loader;
+ },
 
-  _is192: function() {
-    var info = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo);
-    return info.platformVersion.indexOf("1.9") === 0; // Gecko 1.9.2
-  },
+ _is192: function() {
+   var info = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo);
+   return info.platformVersion.indexOf("1.9") === 0; // Gecko 1.9.2
+ },
 
-  _getTopic: function(is192) {
-    return is192 ? "content-document-global-created" : "document-element-inserted";
-  },
+ _getTopic: function(is192) {
+   return is192 ? "content-document-global-created" : "document-element-inserted";
+ },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
-  observe: function(subject, topic, data) {
-    var win;
-    var prePath;
+ QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
+ observe: function(subject, topic, data) {
+   var win;
+   var requestUri;
 
-    switch (topic) {
-      case "content-document-global-created":
-        win = subject;
-        if (win === null) {
-          return;
-        }
-        prePath = data;
-        break;
-      case "document-element-inserted":
-        win = subject.defaultView;
-        if (win === null) {
-          return; // xsl/xbl
-        }
-        prePath = subject.documentURIObject.spec;
-        break;
-      default:
-        throw new Error(topic);
-    }
+   switch (topic) {
+     case "content-document-global-created": // Gecko 1.9.2
+       win = subject;
+       if (win === null) {
+         return;
+       }
+       if (data === "null") {
+         return;
+       }
+       var io = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
+       requestUri = io.newURI(data, null, null);
+       break;
+     case "document-element-inserted":
+       win = subject.defaultView;
+       if (win === null) {
+         return; // xsl/xbl
+       }
+       requestUri = subject.documentURIObject;
+       break;
+     default:
+       throw new Error(topic);
+   }
 
-    var idData = Profile.find(win);
-    if ((win === win.top) && resetStatusIcon(idData.tabElement)) {
-      updateUI(idData.tabElement);
-    }
-    switch (idData.profileNumber) {
-      case Profile.DefaultIdentity:
-      case Profile.UndefinedIdentity:
-        return;
-    }
+   if (win.wrappedJSObject.hasOwnProperty("_multifox_obs")) {
+     console.warn("DUP " + topic + " @ " + requestUri.spec); // https://bugzilla.mozilla.org/show_bug.cgi?id=642145 ?
+     return;
+   }
+   win.wrappedJSObject._multifox_obs = true; // BUG visible by content
 
-    if (prePath === "null") {
-      return;
-    }
-    if (prePath.indexOf("http:") !== 0) {
-      if (prePath.indexOf("https:") !== 0) {
-        return;
-      }
-    }
+   // requestUri=about:neterror?e=dnsNotFound&u=http...
+   var tabUser = TabLogin.getFromDomWindow(win);
+   if (tabUser === null) {
+     return;
+   }
+
+   if (tabUser.isLoginInProgress) {
+     tabUser = TabLogin.getLoginInProgress(tabUser.tabElement);
+   }
+
+   if (isTopWindow(win) === false) {
+     // iframe
+     //console.log("DocStartScriptInjection iframe", requestUri.spec);
+     if (isSupportedScheme(requestUri.scheme)) {
+       var tabLogin = getSubElementLogin(requestUri, tabUser, null);
+       if ((tabLogin !== null) && tabLogin.isLoggedIn) {
+         this._inject(win);
+       //} else {
+       //  console.log("DocStartScriptInjection NOP", tabLogin, tabLogin !== null, tabLogin?("anonResource" in tabLogin):"?");
+       }
+     }
+     return;
+   }
+
+   // new top window
+   var tab = tabUser.tabElement;
+   if (isSupportedScheme(requestUri.scheme)) {
+     if (tabUser.isLoggedIn) {
+       this._inject(win);
+     }
+   } else { // about, javascript
+     tab.removeAttribute("multifox-tab-current-tld");
+     tabUser.setTabAsAnon();
+   }
+
+   updateUI(tab);
+   RedirDetector.resetTab(tab);
+ },
 
 
-    var sandbox = Components.utils.Sandbox(win);
-    sandbox.window = win.wrappedJSObject;
-    sandbox.document = win.document.wrappedJSObject;
+ _inject: function(win) {
+   var sandbox = Cu.Sandbox(win);
+   sandbox.window = win.wrappedJSObject;
+   sandbox.document = win.document.wrappedJSObject;
 
-    var src = this._loader.getScript();
-    try {
-      Components.utils.evalInSandbox(src, sandbox);
-    } catch (ex) {
-      showError(win, "sandbox", prePath + " " + "//exception=" + ex);
-    }
-
-  }
+   var src = this._loader.getScript();
+   try {
+     Cu.evalInSandbox(src, sandbox);
+   } catch (ex) {
+     showError(win, "sandbox", win.document.location + " " + "//exception=" + ex);
+   }
+ }
 };
 
 
-function resetStatusIcon(tab) {
-  if (!tab) {
-    return false;
-  }
+function isSupportedScheme(scheme) {
+ return (scheme === "http") || (scheme === "https");
+}
 
-  if (tab.hasAttribute("multifox-tab-has-login")) {
-    tab.removeAttribute("multifox-tab-has-login");
-    return true;
-  }
 
-  if (tab.hasAttribute("multifox-tab-error")) {
-    tab.removeAttribute("multifox-tab-error");
-    return true;
-  }
-
-  return false;
+function throwException() {
+ console.trace();
+ throw new Error("throwException");
 }
 
 
 function ScriptSourceLoader(is192) {
-  if (is192) {
-    // Gecko 1.9.2
-    this._path = "${PATH_CONTENT}/content-injection-192.js";
-  } else {
-    // Gecko 2.0
-    this._path = "${PATH_CONTENT}/content-injection.js";
-  }
-  this._src = null;
-  this._load(true);
+ if (is192) {
+   // Gecko 1.9.2
+   this._path = "chrome://multifox/content/content-injection-192.js";
+ } else {
+   // Gecko 2.0
+   this._path = "chrome://multifox/content/content-injection.js";
+ }
+ this._src = null;
+ this._load(true);
 }
 
 
 ScriptSourceLoader.prototype = {
 
-  getScript: function() {
-    if (this._src === null) {
-      this._load(false);
-    }
-    return this._src;
-  },
+ getScript: function() {
+   if (this._src === null) {
+     this._load(false);
+   }
+   return this._src;
+ },
 
-  _load: function(async) {
-    var me = this;
-    var xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
-    xhr.onload = function() {
-      delete me._path;
-      me._src = xhr.responseText + "initContext(window, document, '"
-                                 + m_runner.eventSentByChrome + "','" + m_runner.eventSentByContent + "');";
-    };
-    xhr.open("GET", this._path, async);
-    xhr.overrideMimeType("text/plain");
-    xhr.send(null);
-  }
+ _load: function(async) {
+   var me = this;
+   var xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
+   xhr.onload = function() {
+     delete me._path;
+     me._src = xhr.responseText + "initContext(window, document, '"
+                                + m_runner.eventSentByChrome + "','" + m_runner.eventSentByContent + "');";
+   };
+   xhr.open("GET", this._path, async);
+   xhr.overrideMimeType("text/plain");
+   xhr.send(null);
+ }
 };
